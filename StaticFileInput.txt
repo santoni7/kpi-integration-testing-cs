@@ -1,0 +1,2 @@
+Hello world!
+This is example file with data to be read by FileWorker.
