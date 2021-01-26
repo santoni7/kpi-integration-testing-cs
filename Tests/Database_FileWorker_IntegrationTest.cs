@@ -13,32 +13,33 @@ namespace Tests
 	[TestClass]
 	public class Database_FileWorker_IntegrationTest
 	{
-		private Encoding DEFAULT_ENCODING = Encoding.UTF8;
+		private const string CATEGORY_EXPECTING_SUCCESS = "SuccessFlow"; // "Success" flow tests
+		private const string CATEGORY_EXPECTING_FAILURE = "FailureFlow"; // "Failure" flow tests
+
+		private Encoding DEFAULT_ENCODING = Encoding.ASCII;
 		private Random random = new Random();
+		static int MAX_FILE_LENGTH = 156 - Directory.GetCurrentDirectory().Length; // Database has varchar(300) for the fileName column.
+		const int MAX_CONTENT_LENGTH_BYTES = 1024;
 		const string INPUT_DEFAULT_CONTENT = "This is an example\nmultiline text\r\nto be used as content";
 		const string FILE_STATIC_INPUT = "StaticFileInput.txt"; // Existing file. Should be moved to 'bin' folder of Tests proj
-		const string FILE_STATIC_INPUT_TOO_LARGE = "StaticFileInput1025bytes.txt"; // Existing file. Size > 1kb. Should be moved to 'bin' folder of Tests proj
-		//const string FILE_STATIC_INPUT_TOO_LARGE = "StaticFileInputLarge.txt"; // Existing file. Size > 1kb. Should be moved to 'bin' folder of Tests proj
 
-		private static string GenerateRandomFileWithContent(string content, string path = "")
-		{
-			string fileName = path + Guid.NewGuid().ToString() + ".tmp";
-			BaseFileWorker.Write(content, fileName);
-			return fileName;
-		}
 
-		private static string GenerateContent()
-		{
-			return Guid.NewGuid().ToString() +"\n"+ INPUT_DEFAULT_CONTENT;
-		}
-
-		[TestMethod]
-		public void AddFile_WithContentFromReadAll_WithGetFullPath_AddsFileToDatabase()
+		/// <summary>
+		/// fullPath - path to existing file
+		/// </summary>
+		/// <param name="fullPath"></param>
+		[DataTestMethod]
+		[TestCategory(CATEGORY_EXPECTING_SUCCESS)]
+		[DataRow(0)]
+		[DataRow(256)]
+		[DataRow(512)]
+		[DataRow(MAX_CONTENT_LENGTH_BYTES)]
+		public void AddFile_WithContentFromReadAll_WithGetFullPath_AddsFileToDatabase(int contentSize)
 		{
 			// Arrange
 			StorageDatabaseUtils db = DatabaseHelper.ProvideStorageDatabaseUtils();
-			string contents = BaseFileWorker.ReadAll(FILE_STATIC_INPUT);
-			string fullPath = BaseFileWorker.GetFullPath(FILE_STATIC_INPUT);
+			string fullPath = InputHelper.GenerateInputFile(contentSize);
+			string contents = BaseFileWorker.ReadAll(fullPath);
 			var contentBytes = DEFAULT_ENCODING.GetBytes(contents);
 			int initialFileCountInDB = db.GetFiles(fullPath).Rows.Count; // initial count of files with path==fullPath
 			string result_fileName, result_fileContent; byte[] result_fileContentBytes;
@@ -59,6 +60,7 @@ namespace Tests
 
 
 		[TestMethod]
+		[TestCategory(CATEGORY_EXPECTING_SUCCESS)]
 		public void AddFile_WithContentFromReadLinesFirstLine_WithGetFullPath_AddsFileToDatabase()
 		{
 			// Arrange
@@ -84,19 +86,34 @@ namespace Tests
 			Assert.AreEqual(contents, result_fileContent);
 		}
 
+
+		/// <summary>
+		/// Insert existing file from file system into DB
+		/// Make sure it's there, then delete it. Make sure file has been deleted.
+		/// </summary>
+		/// <param name="fileNameSize"></param>
+		/// <param name="contentSize"></param>
 		[DataTestMethod]
-		[DataRow("test1")]
-		[DataRow("test2")]
-		public void DeleteFile_WithExistingPathInDB_UsingGetFullPath_DeletesEntry(string fileName)
+		[TestCategory(CATEGORY_EXPECTING_SUCCESS)]
+		[DataRow(128, MAX_CONTENT_LENGTH_BYTES)]
+		[DataRow(64, 0)]
+		[DataRow(-1, MAX_CONTENT_LENGTH_BYTES)]
+		public void DeleteFile_WithExistingPathInDB_UsingGetFullPath_DeletesEntry(int fileNameSize = -1, int contentSize = MAX_CONTENT_LENGTH_BYTES)
 		{
 			// Arrange
-			var content = GenerateContent();
+			if (fileNameSize < 0) fileNameSize = MAX_FILE_LENGTH;
+			string fileName = InputHelper.GenerateInputFile(size: contentSize, fileNameSize: fileNameSize);
+			string content = BaseFileWorker.ReadAll(fileName);
+			byte[] fileContentBytes = DEFAULT_ENCODING.GetBytes(content);
+			Console.WriteLine("Working with " + fileName + ".\nContent: " + content);
+			Console.WriteLine("FileName length: " + fileName.Length + "\nContent length: " + content.Length + "\nContent length (bytes): " + fileContentBytes.Length);
 			BaseFileWorker.Write(content, fileName);
 			string fullPath = BaseFileWorker.GetFullPath(fileName);
 			string result_fileName; byte[] result_fileContentBytes;
 
 			StorageDatabaseUtils db = DatabaseHelper.ProvideStorageDatabaseUtils();
-			db.AddFile(fullPath, DEFAULT_ENCODING.GetBytes(content));
+			
+			db.AddFile(fullPath, fileContentBytes);
 			DataTable dt = db.GetFiles(fullPath);
 			int initialEntryCount = dt.Rows.Count;
 			var lastRow = dt.Rows[dt.Rows.Count - 1];
@@ -108,34 +125,44 @@ namespace Tests
 			// Assert
 			Assert.IsTrue(success);
 			Assert.AreEqual(initialEntryCount - 1, resultEntryCount);
+			CollectionAssert.AreEqual(fileContentBytes, result_fileContentBytes);
 			// Cleanup
 			File.Delete(fullPath);
+			Console.WriteLine("File was deleted from database and from file system.");
 		}
 
 		/// <summary>
-		/// Max content length is 1024 bytes according to 
+		/// Max content length is 1024 bytes according to [dbo].[AddFile] or StorageDatabaseUtils implementation. 
+		/// Let's check that the method truncates content as expected: leave first 1024 bytes only.
+		/// Also, let's try and launch this on 
 		/// </summary>
-		[TestMethod]
-		public void AddFile_WithContentFromLargeFile_TruncatesContent()
+		/// <param name="contentSizeBytes">Desired content size, in bytes, or other suggestions and propositions.</param>
+		[DataTestMethod]
+		[TestCategory(CATEGORY_EXPECTING_FAILURE)]
+		[DataRow(MAX_CONTENT_LENGTH_BYTES + 1)]
+		[DataRow(MAX_CONTENT_LENGTH_BYTES * 2)]
+		public void AddFile_WithContentFromLargeFile_AddsFile_But_TruncatesContent(int contentSizeBytes = MAX_CONTENT_LENGTH_BYTES)
 		{
 			// Arrange
 			StorageDatabaseUtils db = DatabaseHelper.ProvideStorageDatabaseUtils();
-			string contents = BaseFileWorker.ReadAll(FILE_STATIC_INPUT_TOO_LARGE);
-			string path = BaseFileWorker.GetFullPath(FILE_STATIC_INPUT_TOO_LARGE);
-			var contentBytes = DEFAULT_ENCODING.GetBytes(contents);
-			int initialFileCountInDB = db.GetFiles(path).Rows.Count; // initial count of files with specified path
-			string result_fileName, result_fileContent; byte[] result_fileContentBytes;
+			string path = InputHelper.GenerateInputFile(contentSizeBytes);
+			string inputContent = BaseFileWorker.ReadAll(path);
+			var inputContentBytes = DEFAULT_ENCODING.GetBytes(inputContent);
+			Console.WriteLine("Working with file " + path + "\nContent: " + inputContent);
+			Console.WriteLine("FileName length: " + path.Length + "\nContent length: " + inputContent.Length + "\nContent length (bytes): " + inputContentBytes.Length);
+			int initialFileCountInDB = db.GetFiles(path).Rows.Count; // initial count of files with specified path in DB
+			string result_fileName; byte[] result_fileContentBytes;
 			// Act
-			bool result = db.AddFile(path, contentBytes);
+			bool result = db.AddFile(path, inputContentBytes);
 			DataTable dt = db.GetFiles(path);
 			var lastRow = dt.Rows[dt.Rows.Count - 1];
 			var lastFileId = (int)lastRow.ItemArray[0];
 			db.GetFile(lastFileId, out result_fileName, out result_fileContentBytes);
 			// Assert
-			Assert.IsTrue(result);
-			Assert.AreEqual(initialFileCountInDB + 1, dt.Rows.Count);
-			Assert.AreEqual(path, result_fileName);
-			Assert.IsTrue(contentBytes.Length > result_fileContentBytes.Length);
+			Assert.IsTrue(result); // Entry added to database successfully
+			Assert.AreEqual(initialFileCountInDB + 1, dt.Rows.Count); // Row count increased (new row was added)
+			Assert.AreEqual(path, result_fileName); // File path in DB is equal to inputs
+			Assert.IsTrue(inputContentBytes.Length > result_fileContentBytes.Length); // Content is being truncated because it exceeds maximum length.
 		}
 	}
 }
