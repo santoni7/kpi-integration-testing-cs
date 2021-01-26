@@ -112,26 +112,9 @@ namespace Tests
 			File.Delete(fullPath);
 		}
 
-		//[TestMethod]
-		//public void AddFile_WithContentFromLargeFile_ReturnsFalse()
-		//{
-		//	// Arrange
-		//	StorageDatabaseUtils db = DatabaseHelper.ProvideStorageDatabaseUtils();
-		//	string contents = BaseFileWorker.ReadAll(FILE_STATIC_INPUT_TOO_LARGE);
-		//	string fullPath = BaseFileWorker.GetFullPath(FILE_STATIC_INPUT_TOO_LARGE);
-		//	var contentBytes = DEFAULT_ENCODING.GetBytes(contents);
-		//	int initialFileCountInDB = db.GetFiles(fullPath).Rows.Count; // initial count of files with path==fullPath
-		//	string result_fileName, result_fileContent; byte[] result_fileContentBytes;
-		//	// Act
-		//	bool result = db.AddFile(fullPath, contentBytes); // Add file to Database
-		//	DataTable dt = db.GetFiles(fullPath);
-		//	int resultFileCountInDB = db.GetFiles(fullPath).Rows.Count;
-		//	// Assert
-		//	Assert.IsFalse(result);
-		//	Assert.AreEqual(initialFileCountInDB, resultFileCountInDB);
-		//}
-
-
+		/// <summary>
+		/// Max content length is 1024 bytes according to 
+		/// </summary>
 		[TestMethod]
 		public void AddFile_WithContentFromLargeFile_TruncatesContent()
 		{
